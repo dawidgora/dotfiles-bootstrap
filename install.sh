@@ -228,6 +228,12 @@ else
 fi
 
 # ── 8. Apply dotfiles ─────────────────────────────────────────────────────────
+# Source secrets so OP_SERVICE_ACCOUNT_TOKEN is available in this shell
+if [ -f "$SECRETS_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$SECRETS_FILE"
+fi
+
 printf "\n"
 info "Applying dotfiles..."
 chezmoi apply -v
