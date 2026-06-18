@@ -101,34 +101,42 @@ case "$PLATFORM" in
 esac
 
 # ── 3. Generate SSH key for read-only access to dotfiles repo ─────────────────
-info "Setting up SSH key..."
-
 # Ensure ~/.ssh exists with correct permissions
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 
 if [ -f "$SSH_KEY_PATH" ]; then
-  info "SSH key already exists at $SSH_KEY_PATH — skipping generation."
+  info "SSH key already exists at $SSH_KEY_PATH — skipping."
 else
-  info "Generating ed25519 SSH key at $SSH_KEY_PATH..."
-  ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" -C "dotfiles-bootstrap"
-  chmod 600 "$SSH_KEY_PATH"
-  chmod 644 "$SSH_KEY_PATH.pub"
-  info "SSH key generated."
-fi
+  printf "\n"
+  info "No SSH key found at $SSH_KEY_PATH."
+  printf "Generate one for read-only access to the dotfiles repo? [Y/n]: "
+  read -r gen_ssh
 
-printf "\n"
-info "Public key:"
-cat "$SSH_KEY_PATH.pub"
-printf "\n"
-info "Add this key as a read-only Deploy Key to GitHub repository $DOTFILES_REPO:"
-info "  1. Go to https://github.com/$DOTFILES_REPO/settings/keys"
-info "  2. Click 'Add deploy key'"
-info "  3. Title:     dotfiles-bootstrap"
-info "  4. Key:       paste the public key above"
-info "  5. Leave 'Allow write access' unchecked"
-info "  6. Click 'Add key'"
-printf "\n"
+  if echo "$gen_ssh" | grep -qi "^n"; then
+    warn "Skipping SSH key generation."
+    warn "You will need to set up SSH access to $DOTFILES_REPO manually."
+  else
+    info "Generating ed25519 SSH key at $SSH_KEY_PATH..."
+    ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" -C "dotfiles-bootstrap"
+    chmod 600 "$SSH_KEY_PATH"
+    chmod 644 "$SSH_KEY_PATH.pub"
+    info "SSH key generated."
+
+    printf "\n"
+    info "Public key:"
+    cat "$SSH_KEY_PATH.pub"
+    printf "\n"
+    info "Add this key as a read-only Deploy Key to GitHub repository $DOTFILES_REPO:"
+    info "  1. Go to https://github.com/$DOTFILES_REPO/settings/keys"
+    info "  2. Click 'Add deploy key'"
+    info "  3. Title:     dotfiles-bootstrap"
+    info "  4. Key:       paste the public key above"
+    info "  5. Leave 'Allow write access' unchecked"
+    info "  6. Click 'Add key'"
+    printf "\n"
+  fi
+fi
 
 # ── 4. Configure SSH host alias ───────────────────────────────────────────────
 info "Configuring SSH host alias '$SSH_HOST_ALIAS'..."
@@ -153,20 +161,27 @@ else
 fi
 
 # ── 5. Test SSH access ────────────────────────────────────────────────────────
-printf "\n"
-info "Once you have added the Deploy Key, press Enter to test SSH access..."
-read -r _
+if [ -f "$SSH_KEY_PATH" ]; then
+  printf "\n"
+  info "Once you have added the Deploy Key, press Enter to test SSH access..."
+  read -r _
 
-info "Testing SSH access to $DOTFILES_REPO..."
-if ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST_ALIAS" 2>&1 | grep -q "successfully authenticated"; then
-  info "SSH access verified."
-else
-  # GitHub always exits 1 even on success; check if we get the auth success message
-  if ssh -T "$SSH_HOST_ALIAS" 2>&1 | grep -qi "successfully authenticated\|Hi"; then
+  info "Testing SSH access to $DOTFILES_REPO..."
+  if ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST_ALIAS" 2>&1 | grep -q "successfully authenticated"; then
     info "SSH access verified."
   else
-    die "SSH access to $DOTFILES_REPO failed. Make sure the Deploy Key is added and try again."
+    # GitHub always exits 1 even on success; check if we get the auth success message
+    if ssh -T "$SSH_HOST_ALIAS" 2>&1 | grep -qi "successfully authenticated\|Hi"; then
+      info "SSH access verified."
+    else
+      die "SSH access to $DOTFILES_REPO failed. Make sure the Deploy Key is added and try again."
+    fi
   fi
+else
+  warn "SSH key not found at $SSH_KEY_PATH — skipping SSH access test."
+  warn "Make sure you have SSH access to $DOTFILES_REPO configured before continuing."
+  printf "Press Enter to continue..."
+  read -r _
 fi
 
 # ── 6. Initialize chezmoi ─────────────────────────────────────────────────────
@@ -179,31 +194,37 @@ else
   chezmoi init "$DOTFILES_SSH_URL"
 fi
 
-# ── 7. Sign in to 1Password ──────────────────────────────────────────────────
+# ── 7. Configure 1Password ──────────────────────────────────────────────────
+SECRETS_FILE="$HOME/.secrets"
+
 printf "\n"
 info "═══════════════════════════════════════════════════════════════"
 info "  1Password Setup"
 info "═══════════════════════════════════════════════════════════════"
 info ""
-info "Dotfiles uses 1Password to manage secrets. See the private"
-info "dotfiles repo README for the required setup."
+info "Dotfiles uses a 1Password service account to resolve secrets"
+info "without Touch ID prompts on every chezmoi run."
+info ""
+info "Create a service account at:"
+info "  https://start.1password.com/service-accounts/"
+info "Grant it access to the required vaults (see private dotfiles README)."
 info ""
 
-if command -v op &>/dev/null; then
-  if op account list 2>/dev/null | grep -q "."; then
-    info "1Password CLI is installed and has accounts configured."
-    info "Signing in..."
-    eval "$(op signin)" 2>/dev/null || true
-    info "Signed in."
-  else
-    warn "1Password CLI is installed but no accounts are configured."
-    warn "Run 'op account add' to add your account, then re-run this script."
-  fi
+if [ -f "$SECRETS_FILE" ] && grep -q "OP_SERVICE_ACCOUNT_TOKEN" "$SECRETS_FILE" 2>/dev/null; then
+  info "1Password service account token already configured in $SECRETS_FILE"
 else
-  warn "1Password CLI (op) is not installed."
-  warn "Secrets managed by 1Password will not be resolved."
-  warn "Install it with: brew install 1password-cli (macOS)"
-  warn "  or visit: https://developer.1password.com/docs/cli/get-started/"
+  printf "Paste your 1Password service account token (leave empty to skip): "
+  read -r op_token
+
+  if [ -n "$op_token" ]; then
+    touch "$SECRETS_FILE"
+    chmod 600 "$SECRETS_FILE"
+    echo "export OP_SERVICE_ACCOUNT_TOKEN=\"$op_token\"" >> "$SECRETS_FILE"
+    info "Saved 1Password service account token to $SECRETS_FILE"
+  else
+    warn "Skipped — chezmoi will not be able to resolve 1Password secrets."
+    warn "You can add it later: echo 'export OP_SERVICE_ACCOUNT_TOKEN=\"<token>\"' >> $SECRETS_FILE"
+  fi
 fi
 
 # ── 8. Apply dotfiles ─────────────────────────────────────────────────────────
@@ -223,7 +244,6 @@ info "  3. Review changes:      chezmoi diff"
 info "  4. Re-apply:            chezmoi apply"
 info "  5. Update dotfiles:     chezmoi update"
 info ""
-info "If 1Password secrets failed to resolve, make sure you're"
-info "signed in (op signin) and have set up the required vaults"
-info "and items as described in the private dotfiles repo README,"
-info "then run: chezmoi apply"
+info "If 1Password secrets failed to resolve, check that the"
+info "service account token in ~/.secrets is correct and has"
+info "access to the required vaults, then run: chezmoi apply"
