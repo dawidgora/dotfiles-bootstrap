@@ -195,7 +195,7 @@ else
 fi
 
 # ── 7. Configure 1Password ──────────────────────────────────────────────────
-SECRETS_FILE="$HOME/.secrets"
+SECRETS_FILE="$HOME/.op-env"
 
 printf "\n"
 info "═══════════════════════════════════════════════════════════════"
@@ -223,7 +223,7 @@ else
     info "Saved 1Password service account token to $SECRETS_FILE"
   else
     warn "Skipped — chezmoi will not be able to resolve 1Password secrets."
-    warn "You can add it later: echo 'export OP_SERVICE_ACCOUNT_TOKEN=\"<token>\"' >> $SECRETS_FILE"
+    warn "You can add it later: echo 'export OP_SERVICE_ACCOUNT_TOKEN=\"<token>\"' >> ~/.op-env"
   fi
 fi
 
@@ -251,5 +251,5 @@ info "  4. Re-apply:            chezmoi apply"
 info "  5. Update dotfiles:     chezmoi update"
 info ""
 info "If 1Password secrets failed to resolve, check that the"
-info "service account token in ~/.secrets is correct and has"
+info "service account token in ~/.op-env is correct and has"
 info "access to the required vaults, then run: chezmoi apply"

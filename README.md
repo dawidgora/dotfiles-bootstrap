@@ -33,12 +33,12 @@ After bootstrap, configure machine-specific features with `chezmoi edit-config`.
 
 ## 1Password
 
-Dotfiles uses a **1Password service account** to resolve secrets without Touch ID prompts. The service account token is stored in `~/.secrets` (not tracked by chezmoi).
+Dotfiles uses a **1Password service account** to resolve secrets without Touch ID prompts. The service account token is stored in `~/.op-env` (not tracked by chezmoi).
 
 To create a service account:
 1. Go to https://start.1password.com/service-accounts/
 2. Create a service account and grant it access to the required vaults (see private dotfiles repo README)
-3. The bootstrap script will prompt you for the token, or add it manually: `echo 'export OP_SERVICE_ACCOUNT_TOKEN="<token>"' >> ~/.secrets`
+3. The bootstrap script will prompt you for the token, or add it manually: `echo 'export OP_SERVICE_ACCOUNT_TOKEN="<token>"' >> ~/.op-env`
 
 ## Security notes
 
@@ -46,7 +46,7 @@ To create a service account:
 - The SSH key is generated locally and never leaves your machine — you add only the public key to GitHub.
 - The Deploy Key is configured as **read-only** (no write access).
 - All secrets are stored in 1Password and resolved at `chezmoi apply` time via a service account — they never appear in the git repository.
-- The service account token is stored in `~/.secrets` (chmod 600), which is excluded from chezmoi management.
+- The service account token is stored in `~/.op-env` (chmod 600), which is excluded from chezmoi management.
 
 ## License
 
