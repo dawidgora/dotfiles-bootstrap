@@ -47,9 +47,10 @@ To test this branch, review `install-windows.ps1`, then download and run it in P
 & { $script = Join-Path $env:TEMP 'install-windows.ps1'; Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/fix/windows-bootstrap-first-run/install-windows.ps1' -OutFile $script -ErrorAction Stop; if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'Bootstrap download did not create the script.' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File $script; if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed with exit code $LASTEXITCODE." } }
 ```
 
-The script installs PowerShell 7, Git, and chezmoi with Winget, refreshing PATH
-from the newly persisted Machine and User values so the installed commands can
-be used immediately.
+The script installs PowerShell 7, Git, chezmoi, and the 1Password CLI with
+Winget when needed. It refreshes PATH from the newly persisted Machine and User
+values, including WinGet's portable command links, and checks that `op.exe` is
+available before continuing.
 It initializes the dotfiles source when needed and stops without applying dotfiles.
 You need GitHub access to the private source before it can clone.
 Use `-Source` for an SSH remote, or `-SourcePath` for another checkout path.

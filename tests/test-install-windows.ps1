@@ -65,6 +65,18 @@ try {
     Assert-Equal ($tokenFunction.Extent.Text -match 'SetEnvironmentVariable') $false 'The token helper must not persist credentials'
     Assert-Equal ($scriptText -match '(?im)^\s*&\s*chezmoi\.exe\s+apply\b') $false 'Bootstrap must not run apply automatically'
 
+    $onePasswordPackage = [regex]::Match($scriptText, "(?m)^\s*@\{ Id = 'AgileBits\.1Password\.CLI'; Name = '1Password CLI'; Command = 'op\.exe' \}")
+    Assert-Equal $onePasswordPackage.Success $true 'WinGet must install the verified 1Password CLI package when op.exe is missing'
+    $packageLoopStart = $scriptText.IndexOf('foreach ($package in @(')
+    $commandChecksStart = $scriptText.IndexOf('foreach ($command in @(', $packageLoopStart)
+    $packageLoop = $scriptText.Substring($packageLoopStart, $commandChecksStart - $packageLoopStart)
+    Assert-Equal ($packageLoop.Contains('if (-not (Get-Command $package.Command -ErrorAction SilentlyContinue))')) $true 'The 1Password CLI must follow the normal missing-command install path'
+    Assert-Equal ($packageLoop.Contains('& $winget.Source install --id $package.Id')) $true 'Missing op.exe must install through WinGet'
+    Assert-Equal ($packageLoop.IndexOf('& $winget.Source install --id $package.Id') -lt $packageLoop.LastIndexOf('Update-ProcessPath')) $true 'PATH must refresh after installing op.exe'
+    Assert-Equal ($scriptText.Contains("foreach (`$command in @('git.exe', 'chezmoi.exe', 'op.exe'))")) $true 'Bootstrap must validate op.exe before continuing'
+    Assert-Equal ($scriptText.Contains("Join-Path `$env:LOCALAPPDATA 'Microsoft\WinGet\Links'")) $true 'PATH refresh must include WinGet portable command links'
+    Assert-Equal ($scriptText.IndexOf('$hasOpToken = Set-OpServiceAccountTokenForProcess') -gt $commandChecksStart) $true 'The CLI prerequisite must be checked before token-dependent setup'
+
     $readme = Get-Content -LiteralPath $readmePath -Raw
     $downloadLine = [regex]::Matches($readme, '(?m)^& \{.*Invoke-WebRequest.*$')
     Assert-Equal $downloadLine.Count 1 'README must provide one physical download/run command'
@@ -73,6 +85,7 @@ try {
     Assert-Equal ($downloadLine[0].Value.IndexOf('Remove-Item') -lt $downloadLine[0].Value.IndexOf('Invoke-WebRequest')) $true 'A stale temporary script must be removed before download'
     Assert-Equal ($downloadLine[0].Value.Contains('dotfiles-bootstrap/fix/windows-bootstrap-first-run/install-windows.ps1')) $true 'The Windows test command must download this feature branch, not public main'
     Assert-Equal ($readme.Contains('$secureToken = Read-Host')) $false 'README should not require a second token-prompt snippet'
+    Assert-Equal ($readme.Contains('the 1Password CLI')) $true 'Windows setup docs must list the added CLI prerequisite'
 } finally {
     if ($null -eq $originalToken) {
         Remove-Item Env:OP_SERVICE_ACCOUNT_TOKEN -ErrorAction SilentlyContinue

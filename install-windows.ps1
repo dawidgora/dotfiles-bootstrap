@@ -48,6 +48,7 @@ function Update-ProcessPath {
     $pathHints = @(
         (Join-Path $env:ProgramFiles 'PowerShell\7'),
         (Join-Path $env:ProgramFiles 'Git\cmd'),
+        # WinGet exposes portable package command links, including op.exe, here.
         (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links')
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
 
@@ -76,7 +77,8 @@ Update-ProcessPath
 foreach ($package in @(
     @{ Id = 'Microsoft.PowerShell'; Name = 'PowerShell 7'; Command = 'pwsh.exe' },
     @{ Id = 'Git.Git'; Name = 'Git'; Command = 'git.exe' },
-    @{ Id = 'twpayne.chezmoi'; Name = 'chezmoi'; Command = 'chezmoi.exe' }
+    @{ Id = 'twpayne.chezmoi'; Name = 'chezmoi'; Command = 'chezmoi.exe' },
+    @{ Id = 'AgileBits.1Password.CLI'; Name = '1Password CLI'; Command = 'op.exe' }
 )) {
     if (-not (Get-Command $package.Command -ErrorAction SilentlyContinue)) {
         Write-Host "Installing $($package.Name)..."
@@ -88,7 +90,7 @@ foreach ($package in @(
     }
 }
 
-foreach ($command in @('git.exe', 'chezmoi.exe')) {
+foreach ($command in @('git.exe', 'chezmoi.exe', 'op.exe')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "$command is not available. Open a new PowerShell session and rerun this script."
     }
