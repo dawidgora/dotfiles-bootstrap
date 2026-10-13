@@ -10,7 +10,7 @@ if ($parseErrors.Count -gt 0) {
     throw "PowerShell parse errors: $($parseErrors -join '; ')"
 }
 
-foreach ($functionName in @('Get-MergedPathEntries', 'Set-OpServiceAccountTokenForProcess')) {
+foreach ($functionName in @('Get-MergedPathEntries', 'Set-OpServiceAccountTokenForProcess', 'Ensure-PersistentProfileExecutionPolicy')) {
     $functionAst = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
@@ -24,6 +24,61 @@ function Assert-Equal {
     if ($Actual -cne $Expected) { throw "$Message. Expected '$Expected', got '$Actual'." }
 }
 
+function New-TestPolicyList {
+    param(
+        [string]$MachinePolicy = 'Undefined',
+        [string]$UserPolicy = 'Undefined',
+        [string]$CurrentUser = 'Undefined',
+        [string]$LocalMachine = 'Undefined'
+    )
+    @(
+        [pscustomobject]@{ Scope = 'MachinePolicy'; ExecutionPolicy = $MachinePolicy },
+        [pscustomobject]@{ Scope = 'UserPolicy'; ExecutionPolicy = $UserPolicy },
+        [pscustomobject]@{ Scope = 'CurrentUser'; ExecutionPolicy = $CurrentUser },
+        [pscustomobject]@{ Scope = 'LocalMachine'; ExecutionPolicy = $LocalMachine }
+    )
+}
+
+function Invoke-PolicyPreflightCase {
+    param(
+        [object[]]$Policies,
+        [string]$Consent = 'no',
+        [string]$DefaultPolicy = 'Restricted'
+    )
+
+    $state = @{
+        Policies = $Policies
+        Consent = $Consent
+        DefaultPolicy = $DefaultPolicy
+        ReadCalls = 0
+        PromptCalls = 0
+        SetCalls = 0
+        SetScope = ''
+        SetPolicy = ''
+    }
+    $getPolicyList = { $state.ReadCalls++; @($state.Policies) }.GetNewClosure()
+    $getDefaultPolicy = { $state.DefaultPolicy }.GetNewClosure()
+    $prompt = { param($Message) $state.PromptCalls++; $state.Consent }.GetNewClosure()
+    $setPolicy = {
+        param($ExecutionPolicy, $Scope)
+        $state.SetCalls++
+        $state.SetScope = $Scope
+        $state.SetPolicy = $ExecutionPolicy
+        $updatedPolicies = @()
+        foreach ($entry in $state.Policies) {
+            if ($entry.Scope -eq 'CurrentUser') {
+                $updatedPolicies += [pscustomobject]@{ Scope = 'CurrentUser'; ExecutionPolicy = $ExecutionPolicy }
+            } else {
+                $updatedPolicies += $entry
+            }
+        }
+        $state.Policies = $updatedPolicies
+    }.GetNewClosure()
+    $warnings = @()
+    $ready = Ensure-PersistentProfileExecutionPolicy -GetPolicyList $getPolicyList -GetDefaultPolicy $getDefaultPolicy -Prompt $prompt -SetPolicy $setPolicy -WarningVariable warnings
+    [pscustomobject]@{ Ready = $ready; State = $state; Warnings = $warnings }
+}
+
 $merged = @(Get-MergedPathEntries -MachinePath 'C:\Machine' -UserPath 'C:\User' -ProcessPath 'C:\Old;C:\machine' -PathHints @('C:\Hint'))
 Assert-Equal ($merged -join ';') 'C:\Machine;C:\User;C:\Old;C:\Hint' 'PATH refresh must include persisted Machine/User entries, process PATH, and hints without case-insensitive duplicates'
 $emptyPath = @(Get-MergedPathEntries -MachinePath '' -UserPath $null -ProcessPath '' -PathHints @())
@@ -33,6 +88,48 @@ Assert-Equal $emptyPath.Count 0 'Empty PATH inputs must remain empty'
 # process PATH was created. The refreshed merge must make it immediately usable.
 $afterInstall = @(Get-MergedPathEntries -MachinePath 'C:\Windows;C:\NewInstall' -UserPath '' -ProcessPath 'C:\Old' -PathHints @())
 Assert-Equal ($afterInstall -contains 'C:\NewInstall') $true 'A newly persisted command directory must be available immediately'
+
+$consentedRestricted = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList) -Consent 'yes'
+Assert-Equal $consentedRestricted.Ready $true 'Consenting to the default client Restricted policy should permit managed profiles'
+Assert-Equal $consentedRestricted.State.SetCalls 1 'Consent should make exactly one persistent policy change'
+Assert-Equal $consentedRestricted.State.SetScope 'CurrentUser' 'The policy change must be limited to CurrentUser'
+Assert-Equal $consentedRestricted.State.SetPolicy 'RemoteSigned' 'The only policy bootstrap may persist is RemoteSigned'
+Assert-Equal $consentedRestricted.State.ReadCalls 2 'Bootstrap must re-read policy scopes after changing CurrentUser'
+
+$declinedRestricted = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList -LocalMachine Restricted) -Consent 'no'
+Assert-Equal $declinedRestricted.Ready $false 'Declining must leave a blocking persistent policy unchanged'
+Assert-Equal $declinedRestricted.State.SetCalls 0 'Declining must not change execution policy'
+Assert-Equal (($declinedRestricted.Warnings -join ' ') -match 'New PowerShell sessions may block unsigned managed profiles and token loading') $true 'Declining must explain the impact on future sessions'
+
+$remoteSigned = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList -CurrentUser RemoteSigned) -Consent 'no'
+Assert-Equal $remoteSigned.Ready $true 'An existing CurrentUser RemoteSigned policy should be retained'
+Assert-Equal $remoteSigned.State.PromptCalls 0 'An acceptable existing policy must not prompt'
+Assert-Equal $remoteSigned.State.SetCalls 0 'An acceptable existing policy must not be changed'
+
+foreach ($acceptablePolicy in @('Unrestricted', 'Bypass')) {
+    $existingPolicy = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList -CurrentUser $acceptablePolicy) -Consent 'no'
+    Assert-Equal $existingPolicy.Ready $true "An existing $acceptablePolicy policy should be retained"
+    Assert-Equal $existingPolicy.State.SetCalls 0 "Bootstrap must not downgrade or persist a replacement for $acceptablePolicy"
+}
+
+$allSigned = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList -CurrentUser AllSigned) -Consent 'yes'
+Assert-Equal $allSigned.Ready $true 'Explicit consent may replace blocking CurrentUser AllSigned with RemoteSigned'
+Assert-Equal $allSigned.State.SetPolicy 'RemoteSigned' 'AllSigned must only be changed to CurrentUser RemoteSigned after consent'
+
+$groupPolicy = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList -MachinePolicy Restricted) -Consent 'yes'
+Assert-Equal $groupPolicy.Ready $false 'MachinePolicy Restricted must remain a blocking policy'
+Assert-Equal $groupPolicy.State.PromptCalls 0 'Group Policy restrictions must not offer a local override'
+Assert-Equal $groupPolicy.State.SetCalls 0 'Bootstrap must not attempt to override Group Policy'
+Assert-Equal (($groupPolicy.Warnings -join ' ') -match 'Ask your administrator to review the policy') $true 'Group Policy warning must direct the user to an administrator'
+
+$userGroupPolicy = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList -UserPolicy AllSigned) -Consent 'yes'
+Assert-Equal $userGroupPolicy.Ready $false 'UserPolicy AllSigned must remain a blocking policy'
+Assert-Equal $userGroupPolicy.State.PromptCalls 0 'User Policy restrictions must not offer a local override'
+Assert-Equal $userGroupPolicy.State.SetCalls 0 'Bootstrap must not attempt to override User Policy'
+
+$machinePolicyWins = Invoke-PolicyPreflightCase -Policies (New-TestPolicyList -MachinePolicy RemoteSigned -UserPolicy Restricted) -Consent 'no'
+Assert-Equal $machinePolicyWins.Ready $true 'MachinePolicy must take precedence over UserPolicy'
+Assert-Equal $machinePolicyWins.State.PromptCalls 0 'An acceptable MachinePolicy must prevent unnecessary prompts'
 
 $originalToken = $env:OP_SERVICE_ACCOUNT_TOKEN
 try {
@@ -62,12 +159,21 @@ try {
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-OpServiceAccountTokenForProcess'
     }, $true) | Select-Object -First 1
+    $policyFunction = $ast.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Ensure-PersistentProfileExecutionPolicy'
+    }, $true) | Select-Object -First 1
     Assert-Equal ($tokenFunction.Extent.Text -match 'SetEnvironmentVariable') $false 'The token helper must not persist credentials'
+    Assert-Equal ($policyFunction.Extent.Text.Contains('Get-ExecutionPolicy -List')) $true 'Preflight must inspect persistent policy scopes'
+    Assert-Equal ($policyFunction.Extent.Text.Contains("'Process'")) $false 'Process Bypass must not count as persistent policy'
+    Assert-Equal ($policyFunction.Extent.Text.Contains('Set-ExecutionPolicy -ExecutionPolicy $ExecutionPolicy -Scope $Scope -Force')) $true 'Policy changes must use the requested explicit scope'
     Assert-Equal ($scriptText -match '(?im)^\s*&\s*chezmoi\.exe\s+apply\b') $false 'Bootstrap must not run apply automatically'
 
     $onePasswordPackage = [regex]::Match($scriptText, "(?m)^\s*@\{ Id = 'AgileBits\.1Password\.CLI'; Name = '1Password CLI'; Command = 'op\.exe' \}")
     Assert-Equal $onePasswordPackage.Success $true 'WinGet must install the verified 1Password CLI package when op.exe is missing'
     $packageLoopStart = $scriptText.IndexOf('foreach ($package in @(')
+    $policyPreflight = $scriptText.IndexOf('$profilePolicyReady = Ensure-PersistentProfileExecutionPolicy')
+    Assert-Equal ($policyPreflight -lt $packageLoopStart) $true 'Execution policy preflight must run before package installation'
     $commandChecksStart = $scriptText.IndexOf('foreach ($command in @(', $packageLoopStart)
     $packageLoop = $scriptText.Substring($packageLoopStart, $commandChecksStart - $packageLoopStart)
     Assert-Equal ($packageLoop.Contains('if (-not (Get-Command $package.Command -ErrorAction SilentlyContinue))')) $true 'The 1Password CLI must follow the normal missing-command install path'
@@ -101,6 +207,8 @@ try {
     Assert-Equal ($readme.Contains('Rerun bootstrap before your first apply')) $true 'README must explain how to reload a saved token before the first apply'
     Assert-Equal ($readme.Contains('fresh PowerShell 5.1 and 7 profiles')) $true 'README must explain that fresh profiles load the token after manual apply'
     Assert-Equal ($readme.Contains('Apply never runs automatically.')) $true 'README must state that apply is always manual'
+    Assert-Equal ($readme.Contains('`-ExecutionPolicy Bypass` for this process only')) $true 'README must distinguish process bypass from persistent policy'
+    Assert-Equal ($readme.Contains('Group Policy restrictions are reported')) $true 'README must state that Group Policy is never overridden'
 } finally {
     if ($null -eq $originalToken) {
         Remove-Item Env:OP_SERVICE_ACCOUNT_TOKEN -ErrorAction SilentlyContinue

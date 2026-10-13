@@ -20,6 +20,116 @@ if (-not $winget) {
     throw 'winget is required. Install App Installer, then run this script again.'
 }
 
+function Ensure-PersistentProfileExecutionPolicy {
+    [CmdletBinding()]
+    param(
+        [scriptblock]$GetPolicyList = { Get-ExecutionPolicy -List },
+        [scriptblock]$GetDefaultPolicy = {
+            $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+            if ($operatingSystem.ProductType -eq 1) { 'Restricted' } else { 'RemoteSigned' }
+        },
+        [scriptblock]$Prompt = { param($Message) Read-Host $Message },
+        [scriptblock]$SetPolicy = {
+            param($ExecutionPolicy, $Scope)
+            Set-ExecutionPolicy -ExecutionPolicy $ExecutionPolicy -Scope $Scope -Force
+        }
+    )
+
+    $policyValues = @{}
+    foreach ($entry in @(& $GetPolicyList)) {
+        $policyValues[[string]$entry.Scope] = [string]$entry.ExecutionPolicy
+    }
+    foreach ($scope in @('MachinePolicy', 'UserPolicy', 'CurrentUser', 'LocalMachine')) {
+        if (-not $policyValues.ContainsKey($scope) -or [string]::IsNullOrWhiteSpace($policyValues[$scope])) {
+            $policyValues[$scope] = 'Undefined'
+        }
+    }
+
+    $governedScope = $null
+    $governedPolicy = $null
+    if ($policyValues.MachinePolicy -ne 'Undefined') {
+        $governedScope = 'MachinePolicy'
+        $governedPolicy = $policyValues.MachinePolicy
+    } elseif ($policyValues.UserPolicy -ne 'Undefined') {
+        $governedScope = 'UserPolicy'
+        $governedPolicy = $policyValues.UserPolicy
+    }
+
+    if ($null -ne $governedScope) {
+        if ($governedPolicy -in @('Restricted', 'AllSigned')) {
+            Write-Warning "Execution policy $governedPolicy is enforced by $governedScope. Unsigned local managed profiles may not load. Ask your administrator to review the policy; bootstrap will not override it."
+            return $false
+        }
+        if ($governedPolicy -in @('RemoteSigned', 'Unrestricted', 'Bypass')) {
+            return $true
+        }
+        Write-Warning "Execution policy $governedPolicy is enforced by $governedScope and was not recognized. Bootstrap will not change execution policy."
+        return $false
+    }
+
+    if ($policyValues.CurrentUser -ne 'Undefined') {
+        $persistentPolicy = $policyValues.CurrentUser
+        $persistentScope = 'CurrentUser'
+    } elseif ($policyValues.LocalMachine -ne 'Undefined') {
+        $persistentPolicy = $policyValues.LocalMachine
+        $persistentScope = 'LocalMachine'
+    } else {
+        try {
+            $persistentPolicy = [string](& $GetDefaultPolicy)
+        } catch {
+            Write-Warning "Could not determine the Windows default execution policy: $($_.Exception.Message)"
+            return $false
+        }
+        $persistentScope = 'Windows default'
+    }
+
+    if ($persistentPolicy -in @('RemoteSigned', 'Unrestricted', 'Bypass')) {
+        return $true
+    }
+    if ($persistentPolicy -notin @('Restricted', 'AllSigned')) {
+        Write-Warning "Persistent execution policy $persistentPolicy at $persistentScope was not recognized. Bootstrap will not change execution policy."
+        return $false
+    }
+
+    $message = "Persistent execution policy is $persistentPolicy at $persistentScope. Set only CurrentUser to RemoteSigned so unsigned local managed profiles can load? [y/N]"
+    $response = [string](& $Prompt $message)
+    if ($response -notin @('y', 'Y', 'yes', 'YES', 'Yes')) {
+        Write-Warning 'Execution policy was not changed. New PowerShell sessions may block unsigned managed profiles and token loading. Rerun bootstrap and consent, or ask your administrator for help.'
+        return $false
+    }
+
+    try {
+        [void](& $SetPolicy 'RemoteSigned' 'CurrentUser')
+    } catch {
+        Write-Warning "Could not set CurrentUser execution policy to RemoteSigned: $($_.Exception.Message)"
+        return $false
+    }
+
+    $verifiedPolicies = @{}
+    try {
+        foreach ($entry in @(& $GetPolicyList)) {
+            $verifiedPolicies[[string]$entry.Scope] = [string]$entry.ExecutionPolicy
+        }
+    } catch {
+        Write-Warning "Could not verify the persistent execution policy after the change: $($_.Exception.Message)"
+        return $false
+    }
+    $verifiedMachinePolicy = [string]$verifiedPolicies.MachinePolicy
+    $verifiedUserPolicy = [string]$verifiedPolicies.UserPolicy
+    $verifiedCurrentUser = [string]$verifiedPolicies.CurrentUser
+    if ([string]::IsNullOrWhiteSpace($verifiedMachinePolicy)) { $verifiedMachinePolicy = 'Undefined' }
+    if ([string]::IsNullOrWhiteSpace($verifiedUserPolicy)) { $verifiedUserPolicy = 'Undefined' }
+    $verifiedGoverningPolicy = $verifiedMachinePolicy
+    if ($verifiedGoverningPolicy -eq 'Undefined') { $verifiedGoverningPolicy = $verifiedUserPolicy }
+    if ($verifiedCurrentUser -ne 'RemoteSigned' -or $verifiedGoverningPolicy -in @('Restricted', 'AllSigned')) {
+        Write-Warning 'CurrentUser RemoteSigned did not become the effective persistent policy. A managed policy may take precedence; ask your administrator to review it.'
+        return $false
+    }
+    return $true
+}
+
+$profilePolicyReady = Ensure-PersistentProfileExecutionPolicy
+
 function Get-MergedPathEntries {
     param(
         [AllowNull()][string]$MachinePath,
@@ -212,6 +322,9 @@ if ($hasOpToken) {
     }
 } else {
     Write-Host 'Secret-dependent configurations need authentication before review or apply. Rerun this bootstrap to provide or reload the token.'
+}
+if (-not $profilePolicyReady) {
+    Write-Host 'New PowerShell sessions may not load the token helper or managed profiles until execution policy permits unsigned local scripts.'
 }
 Write-Host 'The documented -NoExit command keeps this process open. Without -NoExit, its process token ends when the process exits.'
 Write-Host 'Next steps:'

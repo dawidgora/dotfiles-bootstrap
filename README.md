@@ -59,6 +59,11 @@ For an existing checkout on another branch, inspect its changes, then fetch and
 switch deliberately. The bootstrap refuses branch switches and never resets
 existing checkout changes.
 
+The command uses `-ExecutionPolicy Bypass` for this process only. Bootstrap
+checks persistent scopes separately and asks before setting only CurrentUser to
+`RemoteSigned` when persistent `Restricted` or `AllSigned` policy blocks unsigned
+local profiles. Group Policy restrictions are reported and never overridden.
+
 The command uses `-NoExit`, so continue in the child PowerShell session after
 bootstrap. Its PATH is refreshed, and its token remains available for review.
 The dotfiles source helper stores the token encrypted with Windows DPAPI at
