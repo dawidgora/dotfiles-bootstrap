@@ -122,7 +122,11 @@ if (-not $configExists) {
     Write-Host 'Keeping the existing chezmoi configuration.'
 }
 
-& chezmoi.exe --source $target apply
-if ($LASTEXITCODE -ne 0) { throw "chezmoi apply failed. Exit code: $LASTEXITCODE" }
-
-Write-Host 'Bootstrap complete. Open a fresh PowerShell or SSH session to use the updated User PATH.'
+Write-Host 'Bootstrap prerequisites and source setup are complete.'
+Write-Host 'No dotfiles or selected packages have been applied.'
+Write-Host 'Next steps:'
+Write-Host '  1. Configure features before the first apply: chezmoi edit-config'
+Write-Host '  2. Review config changes: chezmoi diff --skip-secrets'
+Write-Host '  3. Review dotfiles package scripts separately. The diff is not a package plan.'
+Write-Host '  4. Apply only after reviewing both: chezmoi apply'
+Write-Host '  5. Open a fresh PowerShell or SSH session to use updated PATH entries.'

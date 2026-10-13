@@ -1,8 +1,13 @@
 # dotfiles-bootstrap
 
 Bootstrap a machine for my [chezmoi](https://www.chezmoi.io/) dotfiles source.
-This public repository installs prerequisites, sets up source access, and starts `chezmoi apply`.
+This public repository installs prerequisites, sets up source access, and initializes chezmoi.
+It does not run `chezmoi apply` or install packages selected by your dotfiles configuration.
 Packages, feature flags, and managed config live in [`dawidgora/dotfiles`](https://github.com/dawidgora/dotfiles).
+
+**Release status:** This checkout's workflow changes are not published to public `main`.
+Publish the script updates before using this workflow from `main`.
+Public `main` currently does not include the Windows bootstrap script.
 
 ## macOS and apt-based Linux
 
@@ -16,7 +21,20 @@ cd dotfiles-bootstrap
 
 The script installs Git, curl, SSH, chezmoi, and the 1Password CLI when needed.
 It can create a local SSH key and alias for private source access.
-It then initializes chezmoi, asks for the 1Password token needed by your enabled config, and applies the dotfiles.
+It initializes chezmoi and can save a 1Password service account token for a later manual apply.
+It stops without applying dotfiles or installing packages selected by your configuration.
+
+Before your first apply, run `chezmoi edit-config` to choose features.
+If you saved a 1Password token, load it into your current shell before reviewing templates or applying:
+
+```sh
+if [ -f "$HOME/.op-env" ]; then . "$HOME/.op-env"; fi
+```
+
+Review the configuration with `chezmoi diff --skip-secrets`.
+Review the dotfiles package scripts separately because the diff is not a package plan.
+Run `chezmoi apply` only after reviewing both the configuration and package scripts.
+Open a new shell if installed commands are missing from PATH.
 
 For the existing one-line flow, review [`install.sh`](install.sh) first:
 
@@ -35,19 +53,22 @@ Invoke-WebRequest https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap
 ```
 
 The script installs PowerShell 7, Git, and chezmoi with Winget.
-It initializes the dotfiles source when needed, then starts `chezmoi apply`.
+It initializes the dotfiles source when needed and stops without applying dotfiles.
 You need GitHub access to the private source before it can clone.
 Use `-Source` for an SSH remote, or `-SourcePath` for another checkout path.
 Use `-SourceRef` to test a dotfiles branch before it reaches `main`.
-The dotfiles source installs Node.js, Neovim, OpenCode, WezTerm, and optional tools.
 
+Before your first apply, run `chezmoi edit-config` to choose features.
+Review the configuration with `chezmoi diff --skip-secrets`.
+Review the dotfiles package scripts separately because the diff is not a package plan.
+Run `chezmoi apply` only after reviewing both the configuration and package scripts.
 Open a new PowerShell or SSH session after installation to pick up PATH changes.
 
 ## 1Password on macOS and Linux
 
 The Unix script can prompt for a service account token at runtime.
 It stores the token locally in `~/.op-env` with owner-only permissions.
-The script does not upload the token to this repository.
+The script does not upload the token to this repository or apply dotfiles automatically.
 Create an account at https://start.1password.com/service-accounts/ and grant it access to the required vaults.
 The private dotfiles README lists the required vault access.
 

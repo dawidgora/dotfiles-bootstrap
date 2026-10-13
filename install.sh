@@ -227,29 +227,18 @@ else
   fi
 fi
 
-# ── 8. Apply dotfiles ─────────────────────────────────────────────────────────
-# Source secrets so OP_SERVICE_ACCOUNT_TOKEN is available in this shell
-if [ -f "$SECRETS_FILE" ]; then
-  # shellcheck disable=SC1090
-  . "$SECRETS_FILE"
-fi
-
+# ── 8. Finish without applying dotfiles ────────────────────────────────────────
 printf "\n"
-info "Applying dotfiles..."
-chezmoi apply -v
-
-printf "\n"
-info "═══════════════════════════════════════════════════════════════"
-info "  Bootstrap complete!"
-info "═══════════════════════════════════════════════════════════════"
+info "Bootstrap prerequisites and source setup are complete."
+info "No dotfiles or selected packages have been applied."
 info ""
 info "Next steps:"
-info "  1. Restart your shell:  exec \$SHELL"
-info "  2. Configure features:  chezmoi edit-config"
-info "  3. Review changes:      chezmoi diff"
-info "  4. Re-apply:            chezmoi apply"
-info "  5. Update dotfiles:     chezmoi update"
+info "  1. Configure features before the first apply: chezmoi edit-config"
+info "  2. Load a saved token in this shell, if present: if [ -f \"\$HOME/.op-env\" ]; then . \"\$HOME/.op-env\"; fi"
+info "  3. Review config changes: chezmoi diff --skip-secrets"
+info "  4. Review dotfiles package scripts separately. The diff is not a package plan."
+info "  5. Apply only after reviewing both: chezmoi apply"
+info "  6. Open a new shell if installed commands are missing from PATH."
+info "  7. Update dotfiles later: chezmoi update"
 info ""
-info "If 1Password secrets failed to resolve, check that the"
-info "service account token in ~/.op-env is correct and has"
-info "access to the required vaults, then run: chezmoi apply"
+info "Start a new SSH session if you changed SSH access or configuration."
