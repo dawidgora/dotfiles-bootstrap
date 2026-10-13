@@ -1,7 +1,8 @@
 # dotfiles-bootstrap
 
 Bootstrap a machine for my [chezmoi](https://www.chezmoi.io/) dotfiles source.
-This public repository installs prerequisites, sets up source access, and starts `chezmoi apply`.
+This public repository installs prerequisites, sets up source access, and initializes chezmoi.
+It does not run `chezmoi apply` or install packages selected by your dotfiles configuration.
 Packages, feature flags, and managed config live in [`dawidgora/dotfiles`](https://github.com/dawidgora/dotfiles).
 
 ## macOS and apt-based Linux
@@ -16,7 +17,20 @@ cd dotfiles-bootstrap
 
 The script installs Git, curl, SSH, chezmoi, and the 1Password CLI when needed.
 It can create a local SSH key and alias for private source access.
-It then initializes chezmoi, asks for the 1Password token needed by your enabled config, and applies the dotfiles.
+It initializes chezmoi and can save a 1Password service account token for a later manual apply.
+It stops without applying dotfiles or installing packages selected by your configuration.
+
+Before your first apply, run `chezmoi edit-config` to choose features.
+If you saved a 1Password token, load it into your current shell before reviewing templates or applying:
+
+```sh
+if [ -f "$HOME/.op-env" ]; then . "$HOME/.op-env"; fi
+```
+
+Review the configuration with `chezmoi diff --skip-secrets`.
+Review the dotfiles package scripts separately because the diff is not a package plan.
+Run `chezmoi apply` only after reviewing both the configuration and package scripts.
+Open a new shell if installed commands are missing from PATH.
 
 For the existing one-line flow, review [`install.sh`](install.sh) first:
 
@@ -26,28 +40,57 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/dawidgora/dotfiles-boots
 
 ## Windows without WSL
 
-Windows includes PowerShell 5.1. Install App Installer if `winget` is missing.
-Download the bootstrap script, review it, then run it in PowerShell:
+Windows includes PowerShell 5.1. Install Git before cloning if it is missing.
+Install App Installer if `winget` is missing. Clone the bootstrap and run its launcher:
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/main/install-windows.ps1 -OutFile "$env:TEMP\install-windows.ps1"
-& "$env:TEMP\install-windows.ps1"
+git clone https://github.com/dawidgora/dotfiles-bootstrap.git
+cd dotfiles-bootstrap
+.\install.cmd
 ```
 
-The script installs PowerShell 7, Git, and chezmoi with Winget.
-It initializes the dotfiles source when needed, then starts `chezmoi apply`.
-You need GitHub access to the private source before it can clone.
-Use `-Source` for an SSH remote, or `-SourcePath` for another checkout path.
-Use `-SourceRef` to test a dotfiles branch before it reaches `main`.
-The dotfiles source installs Node.js, Neovim, OpenCode, WezTerm, and optional tools.
+The launcher starts Windows PowerShell with process-scoped execution-policy bypass.
+It passes additional arguments to `install-windows.ps1` and preserves its exit code.
+The script installs PowerShell 7, Git, chezmoi, and the 1Password CLI with WinGet when needed.
+It refreshes PATH from persisted Machine and User values, including WinGet command links.
+It verifies `op.exe`, initializes chezmoi, and stops without applying dotfiles.
+GitHub access to the private dotfiles source is required.
 
-Open a new PowerShell or SSH session after installation to pick up PATH changes.
+You can instead download and run the script from native PowerShell. This command
+saves a temporary file and checks for download failures before launching it:
+
+```powershell
+& { $script = Join-Path $env:TEMP 'install-windows.ps1'; Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/main/install-windows.ps1' -OutFile $script -ErrorAction Stop; if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'Bootstrap download did not create the script.' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File $script; if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed with exit code $LASTEXITCODE." } }
+```
+
+The command uses `-ExecutionPolicy Bypass` for this process only. Bootstrap
+checks persistent scopes separately. If `Restricted` or `AllSigned` blocks unsigned
+local profiles, it asks before setting only `CurrentUser` to `RemoteSigned`.
+Group Policy restrictions are reported and never overridden.
+
+The launcher uses `-NoExit`, so continue in the child PowerShell session after
+bootstrap. Its PATH is refreshed, and its token remains available for review.
+The dotfiles source helper stores the token encrypted with Windows DPAPI at
+`%LOCALAPPDATA%\Dotfiles\op-token.dpapi`. It loads the token only during setup.
+Rerun bootstrap before your first apply to reload the saved token.
+
+Before your first apply, run `chezmoi edit-config` to choose features.
+The helper reuses an inherited token, loads a saved token, or prompts securely.
+Older dotfiles sources without the helper use a process-only prompt and warn that
+durable storage is unavailable until the source is updated. If you skip the
+prompt, rerun bootstrap before reviewing or applying secret-dependent templates.
+Review the configuration with `chezmoi diff --skip-secrets`.
+Review the dotfiles package scripts separately because the diff is not a package plan.
+Run `chezmoi apply` only after reviewing both configuration and package scripts.
+Apply never runs automatically. After manual apply, fresh PowerShell 5.1 and 7
+profiles can load the saved token. Open a new PowerShell or SSH session to pick
+up persisted PATH changes.
 
 ## 1Password on macOS and Linux
 
 The Unix script can prompt for a service account token at runtime.
 It stores the token locally in `~/.op-env` with owner-only permissions.
-The script does not upload the token to this repository.
+The script does not upload the token to this repository or apply dotfiles automatically.
 Create an account at https://start.1password.com/service-accounts/ and grant it access to the required vaults.
 The private dotfiles README lists the required vault access.
 
