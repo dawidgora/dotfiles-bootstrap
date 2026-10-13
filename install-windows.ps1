@@ -131,25 +131,6 @@ if ($SourceRef) {
     }
 }
 
-$configDirectories = @((Join-Path $HOME '.config\chezmoi'))
-if ($env:XDG_CONFIG_HOME) {
-    $configDirectories += Join-Path $env:XDG_CONFIG_HOME 'chezmoi'
-}
-if ($env:APPDATA) {
-    $configDirectories += Join-Path $env:APPDATA 'chezmoi'
-}
-$configNames = @('chezmoi.yaml', 'chezmoi.yml', 'chezmoi.toml', 'chezmoi.json', 'chezmoi.jsonc')
-$configExists = $false
-foreach ($directory in $configDirectories) {
-    foreach ($name in $configNames) {
-        if (Test-Path -LiteralPath (Join-Path $directory $name) -PathType Leaf) {
-            $configExists = $true
-            break
-        }
-    }
-    if ($configExists) { break }
-}
-
 function Set-OpServiceAccountTokenForProcess {
     [CmdletBinding()]
     param([scriptblock]$Prompt = { Read-Host '1Password service account token (leave empty to skip)' -AsSecureString })
@@ -184,7 +165,35 @@ function Set-OpServiceAccountTokenForProcess {
     }
 }
 
-$hasOpToken = Set-OpServiceAccountTokenForProcess
+$tokenHelper = Join-Path $target '.chezmoitemplates\windows-op-token.ps1'
+$hasTokenHelper = Test-Path -LiteralPath $tokenHelper -PathType Leaf
+if ($hasTokenHelper) {
+    Write-Host 'Using the dotfiles source 1Password token helper.'
+    & $tokenHelper -Setup
+} else {
+    Write-Warning 'This dotfiles source has no Windows token helper. Token storage will remain process-only until the source is updated.'
+    [void](Set-OpServiceAccountTokenForProcess)
+}
+$hasOpToken = -not [string]::IsNullOrWhiteSpace($env:OP_SERVICE_ACCOUNT_TOKEN)
+
+$configDirectories = @((Join-Path $HOME '.config\chezmoi'))
+if ($env:XDG_CONFIG_HOME) {
+    $configDirectories += Join-Path $env:XDG_CONFIG_HOME 'chezmoi'
+}
+if ($env:APPDATA) {
+    $configDirectories += Join-Path $env:APPDATA 'chezmoi'
+}
+$configNames = @('chezmoi.yaml', 'chezmoi.yml', 'chezmoi.toml', 'chezmoi.json', 'chezmoi.jsonc')
+$configExists = $false
+foreach ($directory in $configDirectories) {
+    foreach ($name in $configNames) {
+        if (Test-Path -LiteralPath (Join-Path $directory $name) -PathType Leaf) {
+            $configExists = $true
+            break
+        }
+    }
+    if ($configExists) { break }
+}
 
 if (-not $configExists) {
     & chezmoi.exe init --source $target
@@ -196,11 +205,15 @@ if (-not $configExists) {
 Write-Host 'Bootstrap prerequisites and source setup are complete.'
 Write-Host 'No dotfiles or selected packages have been applied.'
 if ($hasOpToken) {
-    Write-Host 'The 1Password token is process-only and was not saved. Continue review/apply here; the parent PowerShell process is unchanged.'
+    if ($hasTokenHelper) {
+        Write-Host 'The token is available in this process. Continue review here; the parent PowerShell process is unchanged.'
+    } else {
+        Write-Host 'The 1Password token is process-only and was not saved. Continue review here; the parent PowerShell process is unchanged.'
+    }
 } else {
-    Write-Host 'Secret-dependent configurations need authentication before review or apply. If you skipped the prompt, rerun this bootstrap in the same open process and provide the token.'
+    Write-Host 'Secret-dependent configurations need authentication before review or apply. Rerun this bootstrap to provide or reload the token.'
 }
-Write-Host 'The documented -NoExit command keeps this process open. Without -NoExit, its process-only token ends when the process exits.'
+Write-Host 'The documented -NoExit command keeps this process open. Without -NoExit, its process token ends when the process exits.'
 Write-Host 'Next steps:'
 Write-Host '  1. Configure features before the first apply: chezmoi edit-config'
 Write-Host '  2. Review config changes: chezmoi diff --skip-secrets'

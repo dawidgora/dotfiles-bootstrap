@@ -41,38 +41,41 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/dawidgora/dotfiles-boots
 ## Windows without WSL
 
 Windows includes PowerShell 5.1. Install App Installer if `winget` is missing.
-To test this branch, review `install-windows.ps1`, then download and run it in PowerShell:
+Review `install-windows.ps1` before running this test-branch command:
 
 ```powershell
-& { $script = Join-Path $env:TEMP 'install-windows.ps1'; Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/fix/windows-bootstrap-first-run/install-windows.ps1' -OutFile $script -ErrorAction Stop; if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'Bootstrap download did not create the script.' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File $script; if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed with exit code $LASTEXITCODE." } }
+& { $script = Join-Path $env:TEMP 'install-windows.ps1'; Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/fix/windows-bootstrap-first-run/install-windows.ps1' -OutFile $script -ErrorAction Stop; if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'Bootstrap download did not create the script.' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File $script -SourceRef feature/windows-op-token; if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed with exit code $LASTEXITCODE." } }
 ```
 
-The script installs PowerShell 7, Git, chezmoi, and the 1Password CLI with
-Winget when needed. It refreshes PATH from the newly persisted Machine and User
-values, including WinGet's portable command links, and checks that `op.exe` is
-available before continuing.
-It initializes the dotfiles source when needed and stops without applying dotfiles.
-You need GitHub access to the private source before it can clone.
-Use `-Source` for an SSH remote, or `-SourcePath` for another checkout path.
-Use `-SourceRef` to test a dotfiles branch before it reaches `main`.
+This command tests an unpublished bootstrap branch. It does not represent the
+public `main` branch. It initializes source branch `feature/windows-op-token`,
+which includes the required Windows token helper. The script installs PowerShell 7, Git, chezmoi, and the
+1Password CLI with WinGet when needed. It refreshes PATH from persisted Machine
+and User values, including WinGet command links, then checks that `op.exe` is
+available. It initializes chezmoi without applying dotfiles. GitHub access to
+the private source is required. Use `-Source` for an SSH remote, `-SourcePath`
+for another checkout path, or `-SourceRef` to test a dotfiles branch.
+For an existing checkout on another branch, inspect its changes, then fetch and
+switch deliberately. The bootstrap refuses branch switches and never resets
+existing checkout changes.
 
-The command uses `-NoExit`, so after bootstrap finishes, continue in this same
-open child PowerShell session. Its PATH is refreshed, and a token entered at the
-prompt remains available there for `chezmoi edit-config` and review/apply. You do
-not need to enter it again in that session. The token is process-only and is not
-saved or inherited by the PowerShell process that launched the child. If you
-close this session, another shell needs its own authentication.
+The command uses `-NoExit`, so continue in the child PowerShell session after
+bootstrap. Its PATH is refreshed, and its token remains available for review.
+The dotfiles source helper stores the token encrypted with Windows DPAPI at
+`%LOCALAPPDATA%\Dotfiles\op-token.dpapi`. It loads the token only during setup.
+Rerun bootstrap before your first apply to reload the saved token.
 
 Before your first apply, run `chezmoi edit-config` to choose features.
-The bootstrap reuses an inherited `OP_SERVICE_ACCOUNT_TOKEN` or prompts for it
-without echoing input. If you skip the prompt, secret-dependent configurations
-need authentication before review or apply; rerun the bootstrap in this still-open
-session to prompt again.
+The helper reuses an inherited token, loads a saved token, or prompts securely.
+Older dotfiles sources without the helper use a process-only prompt and warn that
+durable storage is unavailable until the source is updated. If you skip the
+prompt, rerun bootstrap before reviewing or applying secret-dependent templates.
 Review the configuration with `chezmoi diff --skip-secrets`.
 Review the dotfiles package scripts separately because the diff is not a package plan.
-Run `chezmoi apply` only after reviewing both the configuration and package scripts.
-No apply runs automatically. Open a new PowerShell or SSH session after installation
-to pick up persisted PATH changes.
+Run `chezmoi apply` only after reviewing both configuration and package scripts.
+Apply never runs automatically. After manual apply, fresh PowerShell 5.1 and 7
+profiles can load the saved token. Open a new PowerShell or SSH session to pick
+up persisted PATH changes.
 
 ## 1Password on macOS and Linux
 

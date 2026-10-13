@@ -75,7 +75,16 @@ try {
     Assert-Equal ($packageLoop.IndexOf('& $winget.Source install --id $package.Id') -lt $packageLoop.LastIndexOf('Update-ProcessPath')) $true 'PATH must refresh after installing op.exe'
     Assert-Equal ($scriptText.Contains("foreach (`$command in @('git.exe', 'chezmoi.exe', 'op.exe'))")) $true 'Bootstrap must validate op.exe before continuing'
     Assert-Equal ($scriptText.Contains("Join-Path `$env:LOCALAPPDATA 'Microsoft\WinGet\Links'")) $true 'PATH refresh must include WinGet portable command links'
-    Assert-Equal ($scriptText.IndexOf('$hasOpToken = Set-OpServiceAccountTokenForProcess') -gt $commandChecksStart) $true 'The CLI prerequisite must be checked before token-dependent setup'
+    $helperPath = "Join-Path `$target '.chezmoitemplates\windows-op-token.ps1'"
+    Assert-Equal ($scriptText.Contains($helperPath)) $true 'Bootstrap must locate the shared source-owned token helper'
+    $tokenSetup = $scriptText.IndexOf('& $tokenHelper -Setup')
+    $fallbackSetup = $scriptText.IndexOf('[void](Set-OpServiceAccountTokenForProcess)')
+    $tokenStatus = $scriptText.IndexOf('$hasOpToken = -not [string]::IsNullOrWhiteSpace($env:OP_SERVICE_ACCOUNT_TOKEN)')
+    $init = $scriptText.IndexOf('& chezmoi.exe init --source $target')
+    Assert-Equal ($commandChecksStart -lt $tokenSetup) $true 'The CLI prerequisite must be checked before token-dependent setup'
+    Assert-Equal ($tokenSetup -lt $init -and $fallbackSetup -lt $init) $true 'The helper and legacy fallback must run before chezmoi init'
+    Assert-Equal ($tokenSetup -lt $tokenStatus -and $fallbackSetup -lt $tokenStatus) $true 'Token status must be read from the process environment after setup'
+    Assert-Equal ($scriptText.Contains('Token storage will remain process-only until the source is updated.')) $true 'Missing source helper must warn that durable storage is unavailable'
 
     $readme = Get-Content -LiteralPath $readmePath -Raw
     $downloadLine = [regex]::Matches($readme, '(?m)^& \{.*Invoke-WebRequest.*$')
@@ -84,8 +93,14 @@ try {
     Assert-Equal ($downloadLine[0].Value.Contains('powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File')) $true 'The command must keep the authenticated process open with process-scoped execution-policy bypass'
     Assert-Equal ($downloadLine[0].Value.IndexOf('Remove-Item') -lt $downloadLine[0].Value.IndexOf('Invoke-WebRequest')) $true 'A stale temporary script must be removed before download'
     Assert-Equal ($downloadLine[0].Value.Contains('dotfiles-bootstrap/fix/windows-bootstrap-first-run/install-windows.ps1')) $true 'The Windows test command must download this feature branch, not public main'
+    Assert-Equal ($downloadLine[0].Value.Contains('-File $script -SourceRef feature/windows-op-token')) $true 'The Windows test command must initialize the source branch containing the token helper'
     Assert-Equal ($readme.Contains('$secureToken = Read-Host')) $false 'README should not require a second token-prompt snippet'
     Assert-Equal ($readme.Contains('the 1Password CLI')) $true 'Windows setup docs must list the added CLI prerequisite'
+    Assert-Equal ($readme.Contains('unpublished bootstrap branch')) $true 'README must distinguish this test branch from public main'
+    Assert-Equal ($readme.Contains('%LOCALAPPDATA%\Dotfiles\op-token.dpapi')) $true 'README must document the DPAPI-protected token location'
+    Assert-Equal ($readme.Contains('Rerun bootstrap before your first apply')) $true 'README must explain how to reload a saved token before the first apply'
+    Assert-Equal ($readme.Contains('fresh PowerShell 5.1 and 7 profiles')) $true 'README must explain that fresh profiles load the token after manual apply'
+    Assert-Equal ($readme.Contains('Apply never runs automatically.')) $true 'README must state that apply is always manual'
 } finally {
     if ($null -eq $originalToken) {
         Remove-Item Env:OP_SERVICE_ACCOUNT_TOKEN -ErrorAction SilentlyContinue
