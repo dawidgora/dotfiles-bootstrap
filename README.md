@@ -1,16 +1,12 @@
 # dotfiles-bootstrap
 
-Bootstrap a new machine to use my private [chezmoi](https://www.chezmoi.io/) dotfiles repository.
+Bootstrap a machine for my [chezmoi](https://www.chezmoi.io/) dotfiles source.
+This public repository installs prerequisites, sets up source access, and starts `chezmoi apply`.
+Packages, feature flags, and managed config live in [`dawidgora/dotfiles`](https://github.com/dawidgora/dotfiles).
 
-This repository contains **only** the bootstrap logic — it installs prerequisites, generates an SSH key, configures access, signs in to 1Password, and initializes chezmoi. The actual dotfiles (including feature flags, secrets, and machine-specific config) live in a private repository: [`dawidgora/dotfiles`](https://github.com/dawidgora/dotfiles).
+## macOS and apt-based Linux
 
-## One-line install
-
-```sh
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/main/install.sh)"
-```
-
-## Manual install
+Review the script before running it. The macOS and Linux flow needs access to the private dotfiles source.
 
 ```sh
 git clone https://github.com/dawidgora/dotfiles-bootstrap.git
@@ -18,35 +14,50 @@ cd dotfiles-bootstrap
 ./install.sh
 ```
 
-## What the script does
+The script installs Git, curl, SSH, chezmoi, and the 1Password CLI when needed.
+It can create a local SSH key and alias for private source access.
+It then initializes chezmoi, asks for the 1Password token needed by your enabled config, and applies the dotfiles.
 
-1. **Detects the OS** — macOS or apt-based Linux.
-2. **Installs dependencies** — `git`, `curl`, `ssh`, `chezmoi`, and `op` (1Password CLI).
-3. **Generates an SSH key** — asks first, then generates `~/.ssh/github-dotfiles` (ed25519) if confirmed.
-4. **Configures an SSH host alias** — `github-dotfiles` in `~/.ssh/config`.
-5. **Tests SSH access** — pauses for you to add the Deploy Key to GitHub (skipped if no key was generated).
-6. **Initializes chezmoi** — clones the private dotfiles repo.
-7. **Configures 1Password** — prompts for a service account token, saved to `~/.secrets`.
-8. **Applies dotfiles** — `chezmoi apply -v`.
+For the existing one-line flow, review [`install.sh`](install.sh) first:
 
-After bootstrap, configure machine-specific features with `chezmoi edit-config`. See the private dotfiles repo README for details.
+```sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/main/install.sh)"
+```
 
-## 1Password
+## Windows without WSL
 
-Dotfiles uses a **1Password service account** to resolve secrets without Touch ID prompts. The service account token is stored in `~/.op-env` (not tracked by chezmoi).
+Windows includes PowerShell 5.1. Install App Installer if `winget` is missing.
+Download the bootstrap script, review it, then run it in PowerShell:
 
-To create a service account:
-1. Go to https://start.1password.com/service-accounts/
-2. Create a service account and grant it access to the required vaults (see private dotfiles repo README)
-3. The bootstrap script will prompt you for the token, or add it manually: `echo 'export OP_SERVICE_ACCOUNT_TOKEN="<token>"' >> ~/.op-env`
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/main/install-windows.ps1 -OutFile "$env:TEMP\install-windows.ps1"
+& "$env:TEMP\install-windows.ps1"
+```
 
-## Security notes
+The script installs PowerShell 7, Git, and chezmoi with Winget.
+It initializes the dotfiles source when needed, then starts `chezmoi apply`.
+You need GitHub access to the private source before it can clone.
+Use `-Source` for an SSH remote, or `-SourcePath` for another checkout path.
+Use `-SourceRef` to test a dotfiles branch before it reaches `main`.
+The dotfiles source installs Node.js, Neovim, OpenCode, WezTerm, and optional tools.
 
-- This repository is **public** and must never contain secrets, tokens, hostnames, vault names, or internal infrastructure details.
-- The SSH key is generated locally and never leaves your machine — you add only the public key to GitHub.
-- The Deploy Key is configured as **read-only** (no write access).
-- All secrets are stored in 1Password and resolved at `chezmoi apply` time via a service account — they never appear in the git repository.
-- The service account token is stored in `~/.op-env` (chmod 600), which is excluded from chezmoi management.
+Open a new PowerShell or SSH session after installation to pick up PATH changes.
+
+## 1Password on macOS and Linux
+
+The Unix script can prompt for a service account token at runtime.
+It stores the token locally in `~/.op-env` with owner-only permissions.
+The script does not upload the token to this repository.
+Create an account at https://start.1password.com/service-accounts/ and grant it access to the required vaults.
+The private dotfiles README lists the required vault access.
+
+## Security boundary
+
+- This repository is **public**. Never add credentials, tokens, private infrastructure details, or internal hostnames.
+- The bootstrap creates an SSH key locally if you choose that access method. Only its public key goes to GitHub.
+- Grant the deploy key read-only access to the private dotfiles source.
+- Secret references, package choices, and machine-specific config belong in the dotfiles source, not here.
+- Review downloaded scripts before running them. Do not store a service account token in a public checkout.
 
 ## License
 

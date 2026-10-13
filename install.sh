@@ -72,7 +72,7 @@ install_on_linux() {
     info "Core dependencies already installed."
   fi
 
-  # chezmoi — use official installer since apt repos may be outdated
+  # Use the official chezmoi installer since apt repos may be outdated.
   if ! command -v chezmoi &>/dev/null; then
     info "Installing chezmoi..."
     local installer
@@ -106,7 +106,7 @@ mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 
 if [ -f "$SSH_KEY_PATH" ]; then
-  info "SSH key already exists at $SSH_KEY_PATH — skipping."
+  info "SSH key already exists at $SSH_KEY_PATH - skipping."
 else
   printf "\n"
   info "No SSH key found at $SSH_KEY_PATH."
@@ -153,7 +153,7 @@ touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
 
 if grep -qF "Host ${SSH_HOST_ALIAS}" "$SSH_CONFIG" 2>/dev/null; then
-  info "SSH host alias '$SSH_HOST_ALIAS' already configured — skipping."
+  info "SSH host alias '$SSH_HOST_ALIAS' already configured - skipping."
 else
   # Append a blank line for separation, then the host block
   printf "\n%s\n" "$HOST_BLOCK" >> "$SSH_CONFIG"
@@ -178,7 +178,7 @@ if [ -f "$SSH_KEY_PATH" ]; then
     fi
   fi
 else
-  warn "SSH key not found at $SSH_KEY_PATH — skipping SSH access test."
+  warn "SSH key not found at $SSH_KEY_PATH - skipping SSH access test."
   warn "Make sure you have SSH access to $DOTFILES_REPO configured before continuing."
   printf "Press Enter to continue..."
   read -r _
@@ -188,7 +188,7 @@ fi
 CHEZMOI_SOURCE_DIR="$HOME/.local/share/chezmoi"
 
 if [ -d "$CHEZMOI_SOURCE_DIR" ] && [ "$(ls -A "$CHEZMOI_SOURCE_DIR" 2>/dev/null)" ]; then
-  info "chezmoi source directory already initialized at $CHEZMOI_SOURCE_DIR — skipping init."
+  info "chezmoi source directory already initialized at $CHEZMOI_SOURCE_DIR - skipping init."
 else
   info "Initializing chezmoi from $DOTFILES_SSH_URL..."
   chezmoi init "$DOTFILES_SSH_URL"
@@ -213,16 +213,16 @@ info ""
 if [ -f "$SECRETS_FILE" ] && grep -q "OP_SERVICE_ACCOUNT_TOKEN" "$SECRETS_FILE" 2>/dev/null; then
   info "1Password service account token already configured in $SECRETS_FILE"
 else
-  printf "Paste your 1Password service account token (leave empty to skip): "
-  read -r op_token
+  read -r -s -p "Paste your 1Password service account token (leave empty to skip): " op_token
+  printf "\n"
 
   if [ -n "$op_token" ]; then
     touch "$SECRETS_FILE"
     chmod 600 "$SECRETS_FILE"
-    echo "export OP_SERVICE_ACCOUNT_TOKEN=\"$op_token\"" >> "$SECRETS_FILE"
+    printf 'export OP_SERVICE_ACCOUNT_TOKEN=%q\n' "$op_token" >> "$SECRETS_FILE"
     info "Saved 1Password service account token to $SECRETS_FILE"
   else
-    warn "Skipped — chezmoi will not be able to resolve 1Password secrets."
+    warn "Skipped - chezmoi will not be able to resolve 1Password secrets."
     warn "You can add it later: echo 'export OP_SERVICE_ACCOUNT_TOKEN=\"<token>\"' >> ~/.op-env"
   fi
 fi
