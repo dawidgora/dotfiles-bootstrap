@@ -5,10 +5,6 @@ This public repository installs prerequisites, sets up source access, and initia
 It does not run `chezmoi apply` or install packages selected by your dotfiles configuration.
 Packages, feature flags, and managed config live in [`dawidgora/dotfiles`](https://github.com/dawidgora/dotfiles).
 
-**Release status:** This checkout's workflow changes are not published to public `main`.
-Publish the script updates before using this workflow from `main`.
-Public `main` currently does not include the Windows bootstrap script.
-
 ## macOS and apt-based Linux
 
 Review the script before running it. The macOS and Linux flow needs access to the private dotfiles source.
@@ -45,24 +41,37 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/dawidgora/dotfiles-boots
 ## Windows without WSL
 
 Windows includes PowerShell 5.1. Install App Installer if `winget` is missing.
-Download the bootstrap script, review it, then run it in PowerShell:
+To test this branch, review `install-windows.ps1`, then download and run it in PowerShell:
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/main/install-windows.ps1 -OutFile "$env:TEMP\install-windows.ps1"
-& "$env:TEMP\install-windows.ps1"
+& { $script = Join-Path $env:TEMP 'install-windows.ps1'; Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dawidgora/dotfiles-bootstrap/fix/windows-bootstrap-first-run/install-windows.ps1' -OutFile $script -ErrorAction Stop; if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'Bootstrap download did not create the script.' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File $script; if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed with exit code $LASTEXITCODE." } }
 ```
 
-The script installs PowerShell 7, Git, and chezmoi with Winget.
+The script installs PowerShell 7, Git, and chezmoi with Winget, refreshing PATH
+from the newly persisted Machine and User values so the installed commands can
+be used immediately.
 It initializes the dotfiles source when needed and stops without applying dotfiles.
 You need GitHub access to the private source before it can clone.
 Use `-Source` for an SSH remote, or `-SourcePath` for another checkout path.
 Use `-SourceRef` to test a dotfiles branch before it reaches `main`.
 
+The command uses `-NoExit`, so after bootstrap finishes, continue in this same
+open child PowerShell session. Its PATH is refreshed, and a token entered at the
+prompt remains available there for `chezmoi edit-config` and review/apply. You do
+not need to enter it again in that session. The token is process-only and is not
+saved or inherited by the PowerShell process that launched the child. If you
+close this session, another shell needs its own authentication.
+
 Before your first apply, run `chezmoi edit-config` to choose features.
+The bootstrap reuses an inherited `OP_SERVICE_ACCOUNT_TOKEN` or prompts for it
+without echoing input. If you skip the prompt, secret-dependent configurations
+need authentication before review or apply; rerun the bootstrap in this still-open
+session to prompt again.
 Review the configuration with `chezmoi diff --skip-secrets`.
 Review the dotfiles package scripts separately because the diff is not a package plan.
 Run `chezmoi apply` only after reviewing both the configuration and package scripts.
-Open a new PowerShell or SSH session after installation to pick up PATH changes.
+No apply runs automatically. Open a new PowerShell or SSH session after installation
+to pick up persisted PATH changes.
 
 ## 1Password on macOS and Linux
 

@@ -20,6 +20,59 @@ if (-not $winget) {
     throw 'winget is required. Install App Installer, then run this script again.'
 }
 
+function Get-MergedPathEntries {
+    param(
+        [AllowNull()][string]$MachinePath,
+        [AllowNull()][string]$UserPath,
+        [AllowNull()][string]$ProcessPath,
+        [string[]]$PathHints = @()
+    )
+
+    $seen = @{}
+    $entries = @(
+        @($MachinePath, $UserPath, $ProcessPath) + $PathHints |
+            ForEach-Object { $_ -split ';' } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    foreach ($entry in $entries) {
+        if (-not $seen.ContainsKey($entry)) {
+            $seen[$entry] = $true
+            $entry
+        }
+    }
+}
+
+function Update-ProcessPath {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $pathHints = @(
+        (Join-Path $env:ProgramFiles 'PowerShell\7'),
+        (Join-Path $env:ProgramFiles 'Git\cmd'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
+
+    $userEntries = @($userPath -split ';' | Where-Object { $_ })
+    $knownEntries = @{}
+    foreach ($entry in @($machinePath -split ';') + $userEntries) {
+        if ($entry) { $knownEntries[$entry] = $true }
+    }
+    foreach ($directory in $pathHints) {
+        if (-not $knownEntries.ContainsKey($directory)) {
+            $userEntries += $directory
+            $knownEntries[$directory] = $true
+        }
+    }
+    $updatedUserPath = $userEntries -join ';'
+    if ($userEntries.Count -gt 0 -and $updatedUserPath -ne $userPath) {
+        [Environment]::SetEnvironmentVariable('Path', $updatedUserPath, 'User')
+        $userPath = $updatedUserPath
+    }
+
+    $env:Path = (Get-MergedPathEntries -MachinePath $machinePath -UserPath $userPath -ProcessPath $env:Path -PathHints $pathHints) -join ';'
+}
+
+Update-ProcessPath
+
 foreach ($package in @(
     @{ Id = 'Microsoft.PowerShell'; Name = 'PowerShell 7'; Command = 'pwsh.exe' },
     @{ Id = 'Git.Git'; Name = 'Git'; Command = 'git.exe' },
@@ -31,29 +84,9 @@ foreach ($package in @(
         if ($LASTEXITCODE -ne 0) {
             throw "winget could not install $($package.Name). Exit code: $LASTEXITCODE"
         }
+        Update-ProcessPath
     }
 }
-
-$pathHints = @(
-    (Join-Path $env:ProgramFiles 'PowerShell\7'),
-    (Join-Path $env:ProgramFiles 'Git\cmd'),
-    (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links')
-) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
-
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-$userEntries = @($userPath -split ';' | Where-Object { $_ })
-$knownEntries = @($machinePath -split ';') + $userEntries
-foreach ($directory in $pathHints) {
-    if ($knownEntries -notcontains $directory) {
-        $userEntries += $directory
-        $knownEntries += $directory
-    }
-}
-if ($userEntries.Count -gt 0 -and ($userEntries -join ';') -ne $userPath) {
-    [Environment]::SetEnvironmentVariable('Path', ($userEntries -join ';'), 'User')
-}
-$env:Path = (@($env:Path -split ';') + $pathHints | Select-Object -Unique) -join ';'
 
 foreach ($command in @('git.exe', 'chezmoi.exe')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
@@ -115,6 +148,42 @@ foreach ($directory in $configDirectories) {
     if ($configExists) { break }
 }
 
+function Set-OpServiceAccountTokenForProcess {
+    [CmdletBinding()]
+    param([scriptblock]$Prompt = { Read-Host '1Password service account token (leave empty to skip)' -AsSecureString })
+
+    if (-not [string]::IsNullOrWhiteSpace($env:OP_SERVICE_ACCOUNT_TOKEN)) {
+        Write-Host 'Using the inherited 1Password token for this bootstrap process.'
+        return $true
+    }
+
+    $secureToken = & $Prompt
+    if ($null -eq $secureToken -or $secureToken.Length -eq 0) {
+        if ($null -ne $secureToken) { $secureToken.Dispose() }
+        Write-Warning 'No 1Password token was provided. Secret-dependent configurations need authentication before review or apply.'
+        return $false
+    }
+
+    $tokenPointer = [IntPtr]::Zero
+    try {
+        $tokenPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
+        $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($tokenPointer)
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            Write-Warning 'No 1Password token was provided. Secret-dependent configurations need authentication before review or apply.'
+            return $false
+        }
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $token
+        return $true
+    } finally {
+        if ($tokenPointer -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($tokenPointer)
+        }
+        $secureToken.Dispose()
+    }
+}
+
+$hasOpToken = Set-OpServiceAccountTokenForProcess
+
 if (-not $configExists) {
     & chezmoi.exe init --source $target
     if ($LASTEXITCODE -ne 0) { throw "chezmoi init failed. Exit code: $LASTEXITCODE" }
@@ -124,6 +193,12 @@ if (-not $configExists) {
 
 Write-Host 'Bootstrap prerequisites and source setup are complete.'
 Write-Host 'No dotfiles or selected packages have been applied.'
+if ($hasOpToken) {
+    Write-Host 'The 1Password token is process-only and was not saved. Continue review/apply here; the parent PowerShell process is unchanged.'
+} else {
+    Write-Host 'Secret-dependent configurations need authentication before review or apply. If you skipped the prompt, rerun this bootstrap in the same open process and provide the token.'
+}
+Write-Host 'The documented -NoExit command keeps this process open. Without -NoExit, its process-only token ends when the process exits.'
 Write-Host 'Next steps:'
 Write-Host '  1. Configure features before the first apply: chezmoi edit-config'
 Write-Host '  2. Review config changes: chezmoi diff --skip-secrets'
