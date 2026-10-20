@@ -10,6 +10,23 @@ if ($parseErrors.Count -gt 0) {
     throw "PowerShell parse errors: $($parseErrors -join '; ')"
 }
 
+$bootstrapSource = [IO.File]::ReadAllText($scriptPath)
+$handoff = $bootstrapSource.IndexOf("if (`$PSVersionTable.PSVersion -lt [version]'7.2')")
+$tokenSetup = $bootstrapSource.IndexOf('& $tokenHelper -Setup')
+if ($handoff -lt 0 -or $handoff -ge $tokenSetup) {
+    throw 'Bootstrap must switch to PowerShell 7 before token setup.'
+}
+foreach ($fragment in @(
+    '& pwsh.exe -NoLogo -NoProfile -NoExit -ExecutionPolicy Bypass -File $PSCommandPath',
+    "`$restartArgs = @('-Source', `$Source, '-SourcePath', `$SourcePath)",
+    "if (`$SourceRef) { `$restartArgs += @('-SourceRef', `$SourceRef) }",
+    'PowerShell 7 bootstrap failed. Exit code: $LASTEXITCODE'
+)) {
+    if (-not $bootstrapSource.Contains($fragment)) {
+        throw 'The PowerShell 7 handoff must preserve arguments and failure reporting.'
+    }
+}
+
 foreach ($functionName in @('Get-MergedPathEntries', 'Set-OpServiceAccountTokenForProcess', 'Ensure-PersistentProfileExecutionPolicy')) {
     $functionAst = $ast.Find({
         param($node)

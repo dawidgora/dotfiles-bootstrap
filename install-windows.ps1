@@ -128,8 +128,6 @@ function Ensure-PersistentProfileExecutionPolicy {
     return $true
 }
 
-$profilePolicyReady = Ensure-PersistentProfileExecutionPolicy
-
 function Get-MergedPathEntries {
     param(
         [AllowNull()][string]$MachinePath,
@@ -200,11 +198,32 @@ foreach ($package in @(
     }
 }
 
-foreach ($command in @('git.exe', 'chezmoi.exe', 'op.exe')) {
+foreach ($command in @('pwsh.exe', 'git.exe', 'chezmoi.exe', 'op.exe')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "$command is not available. Open a new PowerShell session and rerun this script."
     }
 }
+
+# install.cmd may enter through Windows PowerShell to install prerequisites.
+# Continue token setup and chezmoi initialization in PowerShell 7, without profiles.
+if ($PSVersionTable.PSVersion -lt [version]'7.2') {
+    if ([string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        throw 'Save this bootstrap as a .ps1 file and run it with pwsh.exe.'
+    }
+    $pwshVersion = & pwsh.exe -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+    if ($LASTEXITCODE -ne 0 -or [version]$pwshVersion -lt [version]'7.2') {
+        throw 'PowerShell 7.2 or newer is required. Update Microsoft.PowerShell and rerun bootstrap.'
+    }
+    $restartArgs = @('-Source', $Source, '-SourcePath', $SourcePath)
+    if ($SourceRef) { $restartArgs += @('-SourceRef', $SourceRef) }
+    & pwsh.exe -NoLogo -NoProfile -NoExit -ExecutionPolicy Bypass -File $PSCommandPath @restartArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "PowerShell 7 bootstrap failed. Exit code: $LASTEXITCODE"
+    }
+    return
+}
+
+$profilePolicyReady = Ensure-PersistentProfileExecutionPolicy
 
 $target = [IO.Path]::GetFullPath($SourcePath)
 $clone = $false
